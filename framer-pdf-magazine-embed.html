@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<!--
+  PDF Magazine Viewer — embed in Framer:
+  1. Host this file (e.g. GitHub Pages, Netlify, or your own server).
+  2. In Framer: Insert → Embed → paste your hosted URL in the URL field.
+  3. Resize the Embed frame to fit your layout (e.g. 900×700 or full width).
+
+  Built-in PDF (no upload): set BUILT_IN_PDF_URL to a URL (e.g. './magazine.pdf')
+  or BUILT_IN_PDF_BASE64 to a base64 data URL to load a PDF automatically.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PDF Magazine Viewer</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #1a1a1a;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      overflow: hidden;
+    }
+    .upload-zone {
+      padding: 3rem;
+      border: 2px dashed rgba(255,255,255,0.3);
+      border-radius: 16px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      background: rgba(255,255,255,0.03);
+      max-width: 90%;
+    }
+    .upload-zone:hover, .upload-zone.dragover {
+      border-color: rgba(255,255,255,0.6);
+      background: rgba(255,255,255,0.06);
+    }
+    .upload-zone input {
+      display: none;
+    }
+    .upload-zone p {
+      margin-top: 0.5rem;
+      opacity: 0.8;
+      font-size: 0.9rem;
+    }
+    .viewer-wrap {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      width: 100%;
+      max-width: 900px;
+      height: 90vh;
+    }
+    .viewer-wrap.active {
+      display: flex;
+    }
+    .magazine-viewport {
+      perspective: 2200px;
+      flex: 1;
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      min-height: 400px;
+    }
+    .magazine {
+      position: relative;
+      width: 85%;
+      max-width: 600px;
+      height: 0;
+      padding-bottom: 130%;
+      transform-style: preserve-3d;
+    }
+    .page {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      backface-visibility: hidden;
+      transform-style: preserve-3d;
+      border-radius: 2px;
+      overflow: hidden;
+      box-shadow: 
+        0 4px 20px rgba(0,0,0,0.4),
+        0 0 0 1px rgba(0,0,0,0.1);
+      transition: none;
+    }
+    .page.flipping {
+      transition: transform 0.7s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+      z-index: 10;
+      box-shadow: 
+        -20px 0 40px -10px rgba(0,0,0,0.5),
+        0 4px 20px rgba(0,0,0,0.3);
+    }
+    .page .page-content {
+      width: 100%;
+      height: 100%;
+      background: #fff;
+      position: absolute;
+      left: 0;
+      top: 0;
+    }
+    .page .page-content canvas {
+      width: 100% !important;
+      height: 100% !important;
+      object-fit: contain;
+      display: block;
+    }
+    .page .page-back {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, #e8e4df 0%, #ddd8d2 100%);
+      backface-visibility: hidden;
+      transform: rotateY(180deg);
+      border-radius: 2px;
+    }
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
+      margin-top: 1.5rem;
+      padding: 0.75rem;
+    }
+    .controls button {
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      color: #fff;
+      padding: 0.6rem 1.25rem;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.95rem;
+      transition: all 0.2s;
+    }
+    .controls button:hover:not(:disabled) {
+      background: rgba(255,255,255,0.25);
+      border-color: rgba(255,255,255,0.5);
+    }
+    .controls button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .page-indicator {
+      font-size: 0.9rem;
+      opacity: 0.9;
+      min-width: 80px;
+      text-align: center;
+    }
+    .loading {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      font-size: 1.1rem;
+    }
+    .loading.active {
+      display: flex;
+    }
+    .loading span {
+      animation: pulse 1s ease infinite;
+    }
+    @keyframes pulse {
+      50% { opacity: 0.5; }
+    }
+    .change-pdf {
+      font-size: 0.8rem;
+      opacity: 0.7;
+      margin-left: auto;
+      cursor: pointer;
+      text-decoration: underline;
+    }
+    .change-pdf:hover {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div class="upload-zone" id="uploadZone">
+    <input type="file" id="fileInput" accept="application/pdf" />
+    <div>📄 Drop a PDF here or click to upload</div>
+    <p>Your file stays in the browser — nothing is uploaded to a server</p>
+  </div>
+
+  <div class="viewer-wrap" id="viewerWrap">
+    <div class="magazine-viewport">
+      <div class="magazine" id="magazine"></div>
+    </div>
+    <div class="controls">
+      <button type="button" id="prevBtn" disabled>← Previous</button>
+      <span class="page-indicator" id="pageIndicator">Page 1 of 1</span>
+      <button type="button" id="nextBtn" disabled>Next →</button>
+      <span class="change-pdf" id="changePdfBtn" style="display: none;">Change PDF</span>
+    </div>
+  </div>
+
+  <div class="loading" id="loading">
+    <span>Loading PDF…</span>
+  </div>
+
+  <script>
+    (function() {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+      // --- Built-in PDF: set one of these, or leave both empty to use upload only ---
+      // Option A: URL to your PDF (host it next to this file, e.g. same folder on GitHub Pages)
+      var BUILT_IN_PDF_URL = '';  // e.g. './magazine.pdf' or 'https://yoursite.com/magazine.pdf'
+      // Option B: base64 data URL (paste the output of a base64-encoded PDF; good for small PDFs)
+      var BUILT_IN_PDF_BASE64 = '';  // e.g. 'data:application/pdf;base64,JVBERi0x...'
+      // ---
+
+      var state = {
+        doc: null,
+        totalPages: 0,
+        currentIndex: 0,
+        pageElements: [],
+        isFlipping: false,
+        scale: 1.8
+      };
+
+      var uploadZone = document.getElementById('uploadZone');
+      var fileInput = document.getElementById('fileInput');
+      var viewerWrap = document.getElementById('viewerWrap');
+      var magazine = document.getElementById('magazine');
+      var prevBtn = document.getElementById('prevBtn');
+      var nextBtn = document.getElementById('nextBtn');
+      var pageIndicator = document.getElementById('pageIndicator');
+      var loading = document.getElementById('loading');
+      var changePdfBtn = document.getElementById('changePdfBtn');
+
+      function showLoading(show) {
+        loading.classList.toggle('active', !!show);
+      }
+
+      function createPageElement(pageNum) {
+        var page = document.createElement('div');
+        page.className = 'page';
+        page.setAttribute('data-page', pageNum);
+        page.style.transformOrigin = 'left center';
+        page.style.zIndex = String(10 - pageNum);
+
+        var content = document.createElement('div');
+        content.className = 'page-content';
+
+        var back = document.createElement('div');
+        back.className = 'page-back';
+
+        page.appendChild(content);
+        page.appendChild(back);
+        return page;
+      }
+
+      function renderPage(pdfPage, container) {
+        var viewport = pdfPage.getViewport({ scale: state.scale });
+        var canvas = document.createElement('canvas');
+        var ctx = canvas.getContext('2d');
+        canvas.height = viewport.height;
+        canvas.width = viewport.width;
+        container.appendChild(canvas);
+
+        return pdfPage.render({
+          canvasContext: ctx,
+          viewport: viewport
+        }).promise;
+      }
+
+      function initViewer(pdf, fromBuiltIn) {
+        state.doc = pdf;
+        state.totalPages = pdf.numPages;
+        showLoading(false);
+        uploadZone.style.display = 'none';
+        viewerWrap.classList.add('active');
+        changePdfBtn.style.display = fromBuiltIn ? 'inline' : 'none';
+
+        for (var i = 0; i < state.totalPages; i++) {
+          var pageEl = createPageElement(i);
+          magazine.appendChild(pageEl);
+          state.pageElements.push({ el: pageEl, rendered: false });
+        }
+
+        updateButtons();
+        updateIndicator();
+        renderCurrentAndNext();
+      }
+
+      function loadPdfFromData(data) {
+        showLoading(true);
+        magazine.innerHTML = '';
+        state.pageElements = [];
+        state.currentIndex = 0;
+        state.isFlipping = false;
+
+        pdfjsLib.getDocument({ data: data }).promise.then(function(pdf) {
+          initViewer(pdf, false);
+        }).catch(function(err) {
+          showLoading(false);
+          console.error('PDF load error', err);
+          alert('Could not load this PDF.');
+        });
+      }
+
+      function loadPdf(file) {
+        if (!file || file.type !== 'application/pdf') return;
+        var reader = new FileReader();
+        reader.onload = function(e) {
+          loadPdfFromData(new Uint8Array(e.target.result));
+        };
+        reader.readAsArrayBuffer(file);
+      }
+
+      function renderCurrentAndNext() {
+        var idx = state.currentIndex;
+        renderPageToElement(idx);
+        if (idx + 1 < state.totalPages) renderPageToElement(idx + 1);
+        if (idx > 0) renderPageToElement(idx - 1);
+        stackPages();
+      }
+
+      function renderPageToElement(index) {
+        var item = state.pageElements[index];
+        if (!item || item.rendered) return;
+        var contentDiv = item.el.querySelector('.page-content');
+        if (!contentDiv || contentDiv.querySelector('canvas')) return;
+
+        state.doc.getPage(index + 1).then(function(pdfPage) {
+          renderPage(pdfPage, contentDiv).then(function() {
+            item.rendered = true;
+          });
+        });
+      }
+
+      function stackPages() {
+        state.pageElements.forEach(function(item, i) {
+          var el = item.el;
+          var isCurrent = i === state.currentIndex;
+          var isPrev = i === state.currentIndex - 1;
+          var isNext = i === state.currentIndex + 1;
+          el.classList.remove('flipping', 'current', 'behind-left', 'behind-right');
+          el.style.transform = '';
+          el.style.zIndex = '1';
+          el.style.visibility = 'hidden';
+
+          if (isCurrent) {
+            el.style.visibility = 'visible';
+            el.style.zIndex = '3';
+            el.style.transform = 'rotateY(0deg)';
+            el.classList.add('current');
+          } else if (isNext) {
+            el.style.visibility = 'visible';
+            el.style.zIndex = '2';
+            el.style.transform = 'rotateY(0deg)';
+          } else if (isPrev) {
+            el.style.visibility = 'visible';
+            el.style.zIndex = '2';
+            el.style.transform = 'rotateY(180deg)';
+          }
+        });
+      }
+
+      function flipNext() {
+        if (state.isFlipping || state.currentIndex >= state.totalPages - 1) return;
+        state.isFlipping = true;
+        prevBtn.disabled = true;
+        nextBtn.disabled = true;
+
+        var currentEl = state.pageElements[state.currentIndex].el;
+        var nextEl = state.pageElements[state.currentIndex + 1].el;
+        currentEl.classList.add('flipping');
+        currentEl.style.zIndex = '10';
+        currentEl.style.transform = 'rotateY(-180deg)';
+
+        currentEl.addEventListener('transitionend', function onEnd() {
+          currentEl.removeEventListener('transitionend', onEnd);
+          state.currentIndex++;
+          updateButtons();
+          updateIndicator();
+          stackPages();
+          renderCurrentAndNext();
+          state.isFlipping = false;
+        }, { once: true });
+      }
+
+      function flipPrev() {
+        if (state.isFlipping || state.currentIndex <= 0) return;
+        state.isFlipping = true;
+        prevBtn.disabled = true;
+        nextBtn.disabled = true;
+
+        var prevEl = state.pageElements[state.currentIndex - 1].el;
+        prevEl.classList.add('flipping');
+        prevEl.style.visibility = 'visible';
+        prevEl.style.zIndex = '10';
+        prevEl.style.transform = 'rotateY(0deg)';
+
+        prevEl.addEventListener('transitionend', function onEnd() {
+          prevEl.removeEventListener('transitionend', onEnd);
+          state.currentIndex--;
+          updateButtons();
+          updateIndicator();
+          stackPages();
+          renderCurrentAndNext();
+          state.isFlipping = false;
+        }, { once: true });
+      }
+
+      function updateButtons() {
+        prevBtn.disabled = state.currentIndex <= 0 || state.isFlipping;
+        nextBtn.disabled = state.currentIndex >= state.totalPages - 1 || state.isFlipping;
+      }
+
+      function updateIndicator() {
+        pageIndicator.textContent = 'Page ' + (state.currentIndex + 1) + ' of ' + state.totalPages;
+      }
+
+      uploadZone.addEventListener('click', function() { fileInput.click(); });
+      fileInput.addEventListener('change', function() {
+        if (fileInput.files.length) loadPdf(fileInput.files[0]);
+      });
+
+      uploadZone.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        uploadZone.classList.add('dragover');
+      });
+      uploadZone.addEventListener('dragleave', function() {
+        uploadZone.classList.remove('dragover');
+      });
+      uploadZone.addEventListener('drop', function(e) {
+        e.preventDefault();
+        uploadZone.classList.remove('dragover');
+        if (e.dataTransfer.files.length) loadPdf(e.dataTransfer.files[0]);
+      });
+
+      prevBtn.addEventListener('click', flipPrev);
+      nextBtn.addEventListener('click', flipNext);
+
+      changePdfBtn.addEventListener('click', function() {
+        viewerWrap.classList.remove('active');
+        uploadZone.style.display = '';
+        changePdfBtn.style.display = 'none';
+      });
+
+      // Load built-in PDF on startup if configured
+      function loadBuiltInPdf() {
+        function openWithPdf(pdf) {
+          initViewer(pdf, true);
+        }
+        function resetAndShowLoading() {
+          showLoading(true);
+          magazine.innerHTML = '';
+          state.pageElements = [];
+          state.currentIndex = 0;
+          state.isFlipping = false;
+        }
+        if (BUILT_IN_PDF_BASE64) {
+          resetAndShowLoading();
+          var base64 = BUILT_IN_PDF_BASE64.replace(/^data:application\/pdf;base64,/, '');
+          var binary = atob(base64);
+          var bytes = new Uint8Array(binary.length);
+          for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          pdfjsLib.getDocument({ data: bytes }).promise.then(openWithPdf).catch(function(err) {
+            showLoading(false);
+            console.error('Built-in PDF (base64) load error', err);
+          });
+          return;
+        }
+        if (BUILT_IN_PDF_URL) {
+          resetAndShowLoading();
+          fetch(BUILT_IN_PDF_URL).then(function(res) { return res.arrayBuffer(); }).then(function(buf) {
+            var data = new Uint8Array(buf);
+            pdfjsLib.getDocument({ data: data }).promise.then(openWithPdf).catch(function(err) {
+              showLoading(false);
+              console.error('Built-in PDF load error', err);
+              alert('Could not load the built-in PDF.');
+            });
+          }).catch(function(err) {
+            showLoading(false);
+            console.error('Built-in PDF (URL) load error', err);
+            alert('Could not load the built-in PDF. Check the URL or try uploading a file.');
+          });
+        }
+      }
+      loadBuiltInPdf();
+    })();
+  </script>
+</body>
+</html>
